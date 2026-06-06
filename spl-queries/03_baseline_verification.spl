@@ -1,0 +1,19 @@
+# =============================================================================
+# BASELINE: High-Frequency Failed Login Detection (Rate-Based)
+# =============================================================================
+# Author      : Shankar Baral
+# Purpose     : Identify accounts experiencing more than 10 failed logins
+#               within any 5-minute window. Used as a high-confidence
+#               brute-force indicator.
+# Data Source : WinEventLog:Security
+# Event Code  : 4625
+# -----------------------------------------------------------------------------
+# Use Case    : Tunable alert query. Convert to Saved Search + Alert Action
+#               to trigger real-time notifications when threshold is breached.
+# Thresholds  : > 10 failed logins / 5 minutes per (host, user, IP) combo
+# =============================================================================
+
+index=* sourcetype="WinEventLog:Security" EventCode=4625
+| bin _time span=5m
+| stats count by _time, ComputerName, TargetUserName, IpAddress
+| where count > 10
