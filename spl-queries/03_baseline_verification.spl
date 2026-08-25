@@ -1,0 +1,15 @@
+# =============================================================================
+# Name        : High-Frequency Failed-Logon Threshold
+# Author      : Shankar Baral
+# Data source : index=main, WinEventLog:Security, EventCode 4625
+# Description : Rate-based detection - fires when a (host, account, IP) sees
+#               more than 10 failed logons in a 5-minute window. Run before the
+#               attack it returns zero, which is how I confirmed a clean baseline
+#               (see screenshot 07). Tunable into a saved search + alert action.
+# MITRE       : T1110 (Brute Force)
+# =============================================================================
+
+index=main sourcetype="WinEventLog:Security" EventCode=4625
+| bin _time span=5m
+| stats count by _time, ComputerName, Account_Name, Source_Network_Address
+| where count > 10

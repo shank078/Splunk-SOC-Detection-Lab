@@ -1,0 +1,15 @@
+# =============================================================================
+# Name        : Brute-Force to Account Lockout Correlation
+# Author      : Shankar Baral
+# Data source : index=main, WinEventLog:Security, EventCode 4625 + 4740
+# Description : Puts failed logons (4625) and the lockout (4740) on one timeline.
+#               Note: EventID 4740 does not carry Source_Network_Address, so the
+#               lockout row's IP is blank by design - the attacker IP is read
+#               from the 4625 rows immediately before the lockout.
+# MITRE       : T1110 (Brute Force), T1531 (Account Access Removal)
+# =============================================================================
+
+index=main sourcetype="WinEventLog:Security" (EventCode=4625 OR EventCode=4740)
+| eval Status=if(EventCode==4625, "Failed Login", "Account Locked")
+| table _time, Status, Account_Name, Source_Network_Address, ComputerName
+| sort - _time

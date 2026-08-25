@@ -1,0 +1,14 @@
+# =============================================================================
+# Name        : Brute-Force Login Attempts by Source IP
+# Author      : Shankar Baral
+# Data source : index=main, WinEventLog:Security, EventCode 4625
+# Description : Profiles source IPs by failed-logon volume. No threshold here -
+#               the goal is a full attacker inventory. Scoped to index=main to
+#               match inputs.conf.
+# MITRE       : T1110 (Brute Force)
+# =============================================================================
+
+index=main sourcetype="WinEventLog:Security" EventCode=4625
+| stats count by Source_Network_Address, Account_Name, ComputerName
+| sort - count
+| rename count as "Failed_Login_Attempts"
