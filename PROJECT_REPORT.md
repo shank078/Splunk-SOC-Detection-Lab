@@ -22,15 +22,14 @@
 11. [MITRE ATT&CK Mapping](#11-mitre-attck-mapping)
 12. [Lessons Learned](#12-lessons-learned)
 13. [Future Roadmap](#13-future-roadmap)
-14. [Conclusion](#14-conclusion)
 
 ---
 
 ## 1. Executive Summary
 
-This project documents the end-to-end deployment of a **Splunk Enterprise SIEM lab** on Microsoft Azure, designed to simulate a real-world Security Operations Center (SOC) detection workflow. By intentionally exposing a Windows Server 2022 host to the public internet over RDP (port 3389), the lab attracted **organic, unsolicited brute-force attacks** from multiple international threat actors — providing live, authentic data to develop and validate detection logic.
+A standalone Splunk Enterprise SIEM lab on Microsoft Azure, run as a full SOC detection workflow. I exposed a Windows Server 2022 host to the internet over RDP (port 3389) so it would attract real brute-force traffic — live data to build and test detections against, rather than a synthetic dataset.
 
-Within 24 hours of exposure, Splunk ingested **28,963+ Windows Security events**, including **17 confirmed failed login attempts** from **4 distinct attacker IPs** spanning **3 countries**. Custom SPL queries were developed to identify the attackers, correlate brute-force activity with the resulting account lockout, and reconstruct the complete attack lifecycle on a single timeline.
+Within about 24 hours, Splunk ingested 28,963+ Windows Security events. My SPL queries pulled 34 failed-login attempts (EventID 4625) from 4 distinct attacker IPs across 3 countries, correlated them to the resulting lockout (EventID 4740) on the `SPLUNKVM` admin account, and rebuilt the attack on a single timeline.
 
 The lab culminated in a live **incident response action** — emergency unlock of the locked admin account via Azure RunCommand — demonstrating practical out-of-band recovery techniques essential to enterprise SOC playbooks.
 
@@ -157,7 +156,7 @@ Full configuration file is available at [`configs/inputs.conf`](configs/inputs.c
 After approximately 18–24 hours of exposure, the index reached **28,963+ events**, confirming a healthy data pipeline.
 
 ```spl
-index=* sourcetype="WinEventLog:Security" | stats count
+index=main sourcetype="WinEventLog:Security" | stats count
 ```
 
 > *Reference: `screenshots/06_winventlog_ingestion_verification.png`*
@@ -176,7 +175,7 @@ Before attack data arrived, the brute-force detection query returned zero result
 
 **SPL Query:**
 ```spl
-index=* sourcetype="WinEventLog:Security" EventCode=4625
+index=main sourcetype="WinEventLog:Security" EventCode=4625
 | stats count by Source_Network_Address, Account_Name, ComputerName
 | sort - count
 | rename count as "Failed_Login_Attempts"
@@ -186,7 +185,7 @@ index=* sourcetype="WinEventLog:Security" EventCode=4625
 
 | Component | Purpose |
 |-----------|---------|
-| `index=*` | Search all indexes (lab simplicity) |
+| `index=main` | Scope the search to the Security events index (matches inputs.conf) |
 | `sourcetype="WinEventLog:Security"` | Restrict to Security log only |
 | `EventCode=4625` | Filter to failed-logon events only |
 | `stats count by ...` | Group failures by attacker IP, target account, host |
@@ -203,13 +202,13 @@ Full SPL: [`spl-queries/01_bruteforce_detection.spl`](spl-queries/01_bruteforce_
 
 ## 8. Phase 5 — Attack Correlation & Lifecycle Analysis
 
-Single-event detection only tells half the story. A skilled SOC analyst must **correlate** multiple events to understand the full attack narrative.
+A single 4625 is background noise. Correlating the failed logins (4625) with the lockout they caused (4740) turns it into a confirmed incident with a clear cause and effect.
 
 ### 8.1 Correlation Query — Brute-Force → Lockout
 
 **SPL Query:**
 ```spl
-index=* sourcetype="WinEventLog:Security" (EventCode=4625 OR EventCode=4740)
+index=main sourcetype="WinEventLog:Security" (EventCode=4625 OR EventCode=4740)
 | eval Status=if(EventCode==4625, "Failed Login", "Account Locked")
 | table _time, Status, Account_Name, Source_Network_Address, ComputerName
 | sort - _time
@@ -222,7 +221,7 @@ index=* sourcetype="WinEventLog:Security" (EventCode=4625 OR EventCode=4740)
 
 ### 8.2 Outcome
 
-The correlation revealed the precise moment the `SPLUNK-SRV-01$` administrator account was **locked** as a direct result of the preceding flood of failed login attempts — confirming that the attackers' brute-force activity successfully triggered Windows' built-in lockout policy, creating a **self-inflicted Denial of Service** scenario.
+The correlation revealed the precise moment the `SPLUNKVM` administrator account was **locked** as a direct result of the preceding flood of failed login attempts — confirming that the attackers' brute-force activity successfully triggered Windows' built-in lockout policy, creating a **self-inflicted Denial of Service** scenario.
 
 > *Reference: `screenshots/09_attack_lifecycle_correlation_timeline.png`*
 
@@ -260,10 +259,12 @@ Administrative access was restored without rebuilding the VM or losing any Splun
 
 | Source IP | Geolocation (est.) | Failed Attempts | Targeted Accounts |
 |-----------|---------------------|------------------|---------------------|
-| `163.47.70.77` | India 🇮🇳 | 16 | `SPLUNKVM`, admin email |
-| `190.2.155.233` | Panama 🇵🇦 | 12 | `SPLUNKVM` |
-| `195.242.214.36` | Europe 🇪🇺 | 4 | `SPLUNKVM` |
-| `86.254.114.246` | France 🇫🇷 | 2 | `Test` |
+| `163.47.70.77` | India (est.) | 16 | `SPLUNKVM`, admin email |
+| `190.2.155.233` | Panama (est.) | 12 | `SPLUNKVM` |
+| `195.242.214.36` | Europe (est.) | 4 | `SPLUNKVM` |
+| `86.254.114.246` | France (est.) | 2 | `Test` |
+
+*Counts are per source IP and sum to 34 failed-login (4625) events. Some attempts hit a blank/unknown username (pre-auth), so the count against named accounts is lower.*
 
 ### 10.2 Key Observations
 
@@ -287,7 +288,7 @@ Administrative access was restored without rebuilding the VM or losing any Splun
 
 ## 12. Lessons Learned
 
-1. **Public RDP is suicidal in production.** Even in a controlled lab, RDP exposure attracts attacks within hours. Always use Azure Bastion, VPN, or Just-in-Time (JIT) access in real environments.
+1. **Public RDP gets found fast.** Even in a lab, an exposed RDP port drew attacks within hours. In a real environment this belongs behind Azure Bastion, a VPN, or Just-in-Time (JIT) access.
 2. **Account lockout policies are double-edged swords.** They block attackers but also create self-inflicted DoS. SOC playbooks must include out-of-band recovery.
 3. **Correlation > Detection.** Identifying a 4625 alone is "noise" — correlating it with 4740 turns noise into a **confirmed incident**.
 4. **SIEM is only as good as the data feeding it.** A misconfigured `inputs.conf` would have rendered the entire detection chain useless.
@@ -306,21 +307,6 @@ Administrative access was restored without rebuilding the VM or losing any Splun
 | Distributed Splunk | Migrate to Indexer + Search Head + Universal Forwarder | Low |
 | MITRE Visualization | Map detections directly to ATT&CK matrix dashboard | Medium |
 | Sigma Rule Conversion | Convert SPL queries to Sigma rules for portability | Low |
-
----
-
-## 14. Conclusion
-
-This lab successfully demonstrated the complete lifecycle of a SIEM-driven SOC workflow — from infrastructure provisioning, through log ingestion, custom detection development, multi-event correlation, and finally live incident response. The intentional exposure of a Windows Server to the public internet provided **authentic real-world attack data**, far more valuable than synthetic or simulated datasets.
-
-The project validates core SOC analyst capabilities including:
-- Splunk Enterprise deployment & configuration
-- SPL detection engineering
-- Multi-event correlation & timeline reconstruction
-- MITRE ATT&CK mapping
-- Cloud-native incident response
-
-It also reinforces a fundamental truth of modern cybersecurity: **exposure equals compromise**. Within hours of being online, the host was discovered, profiled, and attacked by adversaries on three continents. This is the daily reality every SOC analyst must defend against.
 
 ---
 
